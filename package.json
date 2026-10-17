@@ -1,0 +1,22 @@
+{
+  "name": "micany-tradx",
+  "version": "1.0.0",
+  "description": "In-house crypto trading signal engine with human-in-the-loop confirmation",
+  "main": "strategyEngine.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "engine": "node strategyEngine.js",
+    "server": "node server.js",
+    "check": "node --check server.js && node --check strategyEngine.js && node --check db.js && node --check tradeController.js",
+    "db:init": "node scripts/initDb.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^5.3.0",
+    "pg": "^8.12.0",
+    "technicalindicators": "^3.1.0",
+    "ws": "^8.18.0"
+  }
+}

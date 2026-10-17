@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+trading-dashboard/node_modules/
+
+# Environment — contains secrets, never commit
+.env
+.env*.local
+*.env
+
+# Next.js build outputs
+.next/
+trading-dashboard/.next/
+out/
+build/
+.vercel
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+next-env.d.ts
