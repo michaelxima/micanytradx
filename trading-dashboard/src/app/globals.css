@@ -1,26 +1,73 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #090d16;
+  --foreground: #f1f5f9;
+  --card-bg: #111827;
+  --card-border: #1f293d;
+  --emerald: #10b981;
+  --crimson: #ef4444;
+  --cyan: #06b6d4;
+  --amber: #f59e0b;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #090d16;
+  color: #f1f5f9;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f293d;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Radar pulse animation */
+@keyframes radar-ping {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.6);
+    opacity: 0.2;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.radar-ping {
+  animation: radar-ping 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes flash-green {
+  0%, 100% { color: inherit; }
+  50% { color: #10b981; text-shadow: 0 0 10px rgba(16, 185, 129, 0.5); }
+}
+
+@keyframes flash-red {
+  0%, 100% { color: inherit; }
+  50% { color: #ef4444; text-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
+}
+
+.price-flash-up {
+  animation: flash-green 0.7s ease-out;
+}
+
+.price-flash-down {
+  animation: flash-red 0.7s ease-out;
 }
