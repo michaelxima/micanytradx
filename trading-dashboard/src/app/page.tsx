@@ -804,18 +804,18 @@ export default function TradingDashboard() {
                   {openTrades.map((trade) => {
                     const entry = parseFloat(String(trade.entry_price));
                     const qty = parseFloat(String(trade.quantity));
-                    // Phase D: prefer the backend's authoritative unrealized P&L
-                    // (accounts for commission + correct per-symbol live price).
-                    // Fall back to the local BTC ticker calc only if absent.
+                    // Backend is the SINGLE SOURCE OF TRUTH for unrealized P&L:
+                    // /api/trades/unrealized is commission-aware and priced off
+                    // the same feed the engine trades on. We do NOT fall back to
+                    // the local mainnet ticker, because that produces a figure
+                    // that contradicts the engine. If the backend hasn't reported
+                    // yet, we show a neutral "awaiting" state instead.
                     const live = livePositions.find((p) => p.tradeId === trade.id);
-                    const current = live
-                      ? live.currentPrice
-                      : livePrice > 0
-                      ? livePrice
-                      : entry;
-                    const pnlAbs = live ? live.unrealizedPnl : (current - entry) * qty;
-                    const pnlPct = live ? live.unrealizedPnlPercent : ((current - entry) / entry) * 100;
-                    const isProfit = pnlAbs >= 0;
+                    const hasBackend = live !== undefined;
+                    const current = hasBackend ? live.currentPrice : null;
+                    const pnlAbs = hasBackend ? live.unrealizedPnl : null;
+                    const pnlPct = hasBackend ? live.unrealizedPnlPercent : null;
+                    const isProfit = (pnlAbs ?? 0) >= 0;
 
                     return (
                       <tr key={trade.id} className="hover:bg-slate-800/40 transition">
@@ -831,19 +831,27 @@ export default function TradingDashboard() {
                         <td className="p-3.5 text-rose-400 font-medium">
                           ${parseFloat(String(trade.stop_loss_price)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </td>
-                        <td className="p-3.5 font-bold text-white">${current.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="p-3.5 font-bold text-white">
+                          {current !== null
+                            ? `$${current.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                            : <span className="text-slate-500 font-normal">—</span>}
+                        </td>
                         <td className="p-3.5">
-                          <div
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-xs ${
-                              isProfit
-                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                                : "bg-rose-500/20 text-rose-400 border border-rose-500/30"
-                            }`}
-                          >
-                            {isProfit ? "+" : ""}
-                            {pnlPct.toFixed(2)}% (${isProfit ? "+" : ""}
-                            {pnlAbs.toFixed(2)})
-                          </div>
+                          {pnlAbs !== null && pnlPct !== null ? (
+                            <div
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-xs ${
+                                isProfit
+                                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                  : "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                              }`}
+                            >
+                              {isProfit ? "+" : ""}
+                              {pnlPct.toFixed(2)}% (${isProfit ? "+" : ""}
+                              {pnlAbs.toFixed(2)})
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 text-xs italic">awaiting engine…</span>
+                          )}
                         </td>
                         <td className="p-3.5 text-right pr-5 font-sans">
                           <button
