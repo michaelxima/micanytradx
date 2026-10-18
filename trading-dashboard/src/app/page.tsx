@@ -77,7 +77,15 @@ interface LivePosition {
 
 export default function TradingDashboard() {
   // Config & API State
-  const [apiUrl, setApiUrl] = useState(process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000");
+  // Default to the deployed Railway backend so a production build works even
+  // without NEXT_PUBLIC_API_URL set. Override order:
+  //   1. NEXT_PUBLIC_API_URL (build-time env, if provided)
+  //   2. this baked-in production default
+  // For local dev, use the in-app Settings override or set NEXT_PUBLIC_API_URL
+  // to http://localhost:3000 in a local .env.local.
+  const [apiUrl, setApiUrl] = useState(
+    process.env.NEXT_PUBLIC_API_URL || "https://micanytradx-production.up.railway.app"
+  );
   const [isApiOnline, setIsApiOnline] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
