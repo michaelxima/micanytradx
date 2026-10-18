@@ -9,6 +9,7 @@ const pool = require('./db');
 const { performRiskCheck } = require('./riskManager');
 const { placeOrderAndWaitForFill } = require('./exchangeManager');
 const engine = require('./strategyEngine');
+const { notifyTradeExecuted, notifyTradeClosed } = require('./notificationManager');
 
 // ---------------------------------------------------------------------------
 // confirmBuy
@@ -98,6 +99,9 @@ async function confirmBuy(signalId, userId = 'in-house-user', confirmedPrice) {
 
         // 6. ONLY after the DB commit, drive the live engine state.
         engine.confirmBuy(actualEntryPrice);
+
+        // Phase G: alert that a trade was executed.
+        notifyTradeExecuted(signal.symbol.toUpperCase(), 'LONG', actualQty, actualEntryPrice.toFixed(2));
 
         return {
             success: true,
@@ -194,6 +198,9 @@ async function confirmSell(tradeId, exitPrice = null, reason = 'manual') {
 
         // 6. Drive the engine back to flat only after the DB commit.
         engine.confirmSell(actualExitPrice);
+
+        // Phase G: alert that the position was closed with net P&L.
+        notifyTradeClosed(trade.symbol, netPnlAbsolute.toFixed(2), netPnlPercentage.toFixed(2), reason);
 
         return {
             success: true,

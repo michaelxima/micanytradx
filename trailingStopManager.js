@@ -6,6 +6,7 @@
 require('dotenv').config();
 const pool = require('./db');
 const { client: binanceClient } = require('./exchangeManager');
+const { notifyTrailingStop } = require('./notificationManager');
 
 const TRAILING_CONFIG = {
     CHECK_INTERVAL_MS: parseInt(process.env.TRAIL_CHECK_INTERVAL_MS) || 10000, // every 10s
@@ -87,6 +88,13 @@ async function evaluateOpenPositions() {
                         `\ud83d\udcc8 Trailing Stop Updated: ${trade.symbol} | ` +
                         `Old SL: ${currentStopLoss} -> New SL: ${newStopLoss.toFixed(2)} ` +
                         `(Profit: ${profitPercent.toFixed(2)}%)`
+                    );
+                    // Phase G: alert that the stop was ratcheted up.
+                    notifyTrailingStop(
+                        trade.symbol,
+                        Number(currentStopLoss).toFixed(2),
+                        newStopLoss.toFixed(2),
+                        profitPercent.toFixed(2)
                     );
                     // TODO: push notification — "Stop loss moved up / to break-even".
                 }

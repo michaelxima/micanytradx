@@ -11,6 +11,7 @@ require('dotenv').config();
 const WebSocket = require('ws');
 const pool = require('./db');
 const { client: binanceClient } = require('./exchangeManager');
+const { notifyInfrastructure } = require('./notificationManager');
 
 // ==========================================
 // MODULES 1 & 3: Resilient WebSocket Manager (auto-reconnect + heartbeat)
@@ -81,6 +82,7 @@ class ResilientWebSocket {
                 console.error(
                     `\ud83d\udea8 HEARTBEAT FAILED: no data for ${silence}ms. Forcing reconnect.`
                 );
+                notifyInfrastructure('Heartbeat Failed', `${this.symbol} silent for ${silence}ms`);
                 this.stopHeartbeat();
                 // terminate() fires 'close', which triggers reconnect once.
                 try { this.ws.terminate(); } catch { /* already dead */ }
@@ -102,6 +104,13 @@ class ResilientWebSocket {
         const delay = Math.min(1000 * 2 ** this.reconnectAttempts, this.maxReconnectDelay);
         this.reconnectAttempts++;
         console.log(`\u23f3 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})...`);
+        // Phase G: alert on first reconnect and every 5th, to avoid spam.
+        if (this.reconnectAttempts === 1 || this.reconnectAttempts % 5 === 0) {
+            notifyInfrastructure(
+                'WebSocket Reconnect',
+                `${this.symbol} reconnecting (attempt ${this.reconnectAttempts})`
+            );
+        }
 
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;

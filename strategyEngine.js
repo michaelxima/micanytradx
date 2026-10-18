@@ -6,6 +6,7 @@ const { EMA, RSI } = require('technicalindicators');
 const Binance = require('binance-api-node').default;
 const { ResilientWebSocket, recoverOpenPositions } = require('./infrastructureManager');
 const { checkHigherTimeframeTrend, checkVolumeRegime } = require('./marketAnalyzer');
+const { notifySignal } = require('./notificationManager');
 
 // ---------------------------------------------------------------------------
 // Binance API client (testnet or live depending on .env)
@@ -173,6 +174,8 @@ function evaluateStrategy() {
                 console.log(`   ✅ 15m EMA cross + RSI < ${RSI_BUY_CEILING}`);
                 console.log(`   ✅ 1h trend bullish (price > 1h EMA50)`);
                 console.log(`   ✅ Volume spike: ${volumeCheck.volumeRatio}x average`);
+                // Phase G: push the high-confidence signal to Telegram/Discord.
+                notifySignal(SYMBOL.toUpperCase(), 'BUY', currentPrice.toFixed(2), currentRsi);
                 // TODO: Trigger Push Notification / Webhook to your Next.js frontend here
                 // TODO: Log signal to PostgreSQL
                 // The human reviews the alert and calls confirmBuy() to enter.

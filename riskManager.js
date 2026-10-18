@@ -5,6 +5,7 @@
 
 require('dotenv').config();
 const pool = require('./db');
+const { notifyRiskHalt } = require('./notificationManager');
 
 // ---------------------------------------------------------------------------
 // Binance REST client (reuse same testnet/live config as tradeController)
@@ -323,6 +324,7 @@ function haltTrading(reason) {
     RISK_CONFIG.isTradingHalted = true;
     RISK_CONFIG.haltReason = reason;
     console.error(`🛑 TRADING HALTED: ${reason}`);
+    notifyRiskHalt(reason); // Phase G: always alert on kill switch
 }
 
 function resumeTrading() {

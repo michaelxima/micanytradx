@@ -12,6 +12,7 @@ const {
     getSlippageAnalysis,
     getLiveUnrealizedPnL,
 } = require('./analyticsController');
+const { sendTelegram, sendDiscord } = require('./notificationManager');
 const pool = require('./db');
 
 const app = express();
@@ -180,6 +181,39 @@ app.get('/api/trades/unrealized', async (req, res) => {
 });
 
 // ==========================================
+// DIAGNOSTIC: Test notification (Phase G)
+// ==========================================
+// Fires a message to each configured channel and reports the per-channel
+// outcome, so you can verify Telegram/Discord credentials end-to-end.
+// Calls the senders directly (awaited) rather than the fire-and-forget queue
+// so the HTTP response carries the real result.
+app.get('/api/test-notification', async (req, res) => {
+    const stamp = new Date().toISOString();
+    const tgEnabled = !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID;
+    const dcEnabled = !!process.env.DISCORD_WEBHOOK_URL;
+    try {
+        const [telegram, discord] = await Promise.all([
+            sendTelegram(`ℹ️ <b>MicanyTradx test</b>\nNotification system check at ${stamp}`),
+            sendDiscord(
+                'ℹ️ MicanyTradx test',
+                `Notification system check at ${stamp}`,
+                0x3498db,
+                [{ name: 'Source', value: '/api/test-notification', inline: true }]
+            ),
+        ]);
+        res.json({
+            success: true,
+            configured: { telegram: tgEnabled, discord: dcEnabled },
+            results: { telegram, discord },
+            hint: 'sent=false with reason "disabled" means that channel\'s env vars are not set on this server.',
+        });
+    } catch (error) {
+        console.error('Error in test-notification:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ==========================================
 // 3. START SERVER
 // ==========================================
 app.listen(PORT, () => {
@@ -193,4 +227,5 @@ app.listen(PORT, () => {
     console.log(`   - GET  /api/trades/unrealized`);
     console.log(`   - GET  /api/analytics/performance`);
     console.log(`   - GET  /api/analytics/slippage`);
+    console.log(`   - GET  /api/test-notification`);
 });
