@@ -3,6 +3,21 @@
 require('dotenv').config();
 const WebSocket = require('ws');
 const { EMA, RSI } = require('technicalindicators');
+const Binance = require('binance-api-node').default;
+const { ResilientWebSocket, recoverOpenPositions } = require('./infrastructureManager');
+const { checkHigherTimeframeTrend, checkVolumeRegime } = require('./marketAnalyzer');
+
+// ---------------------------------------------------------------------------
+// Binance API client (testnet or live depending on .env)
+// ---------------------------------------------------------------------------
+const binanceClient = Binance({
+    apiKey: process.env.BINANCE_API_KEY || '',
+    apiSecret: process.env.BINANCE_API_SECRET || '',
+    ...(process.env.BINANCE_TESTNET === 'true' && {
+        httpBase: 'https://testnet.binance.vision',
+        wsBase: 'wss://testnet.binance.vision/ws',
+    }),
+});
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -34,61 +49,67 @@ let entryPrice = 0;       // Real price captured at buy confirmation
 // ---------------------------------------------------------------------------
 // WebSocket connection with auto-reconnect
 // ---------------------------------------------------------------------------
-let ws;
+// Phase C: resilient WebSocket (auto-reconnect + heartbeat) replaces the old
+// hand-rolled socket. The candle-processing logic is unchanged — it just
+// lives in the onMessage callback now.
+let wsManager = null;
+
+function handleKline(message) {
+    const kline = message.k;
+    if (!kline) return;
+
+    // Only evaluate when a candle CLOSES (x: true) to avoid mid-candle noise.
+    if (kline.x) {
+        const closePrice = parseFloat(kline.c);
+        if (!Number.isFinite(closePrice)) return;
+
+        closePrices.push(closePrice);
+        currentPrice = closePrice;
+
+        if (closePrices.length > MAX_HISTORY) {
+            closePrices.shift();
+        }
+
+        console.log(
+            `[Candle Closed] Price: $${closePrice} | Array Length: ${closePrices.length}`
+        );
+        evaluateStrategy();
+    }
+}
 
 function connect() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-        return ws;
-    }
-    const url = `wss://stream.binance.com:9443/ws/${SYMBOL}@kline_${TIMEFRAME}`;
-    ws = new WebSocket(url);
+    if (wsManager) return wsManager; // already connected / connecting
 
-    ws.on('open', () => {
-        console.log(`Listening to ${SYMBOL} ${TIMEFRAME} real-time data...`);
-    });
-
-    ws.on('message', (data) => {
-        let message;
-        try {
-            // Binance sends a Buffer — convert to string before parsing.
-            message = JSON.parse(data.toString());
-        } catch (err) {
-            console.error('Failed to parse message:', err.message);
-            return;
-        }
-
-        const kline = message.k;
-        if (!kline) return;
-
-        // We only evaluate when a candle CLOSES (x: true) to avoid
-        // false signals mid-candle.
-        if (kline.x) {
-            const closePrice = parseFloat(kline.c);
-            if (!Number.isFinite(closePrice)) return;
-
-            closePrices.push(closePrice);
-            currentPrice = closePrice;
-
-            // Keep only the last MAX_HISTORY prices.
-            if (closePrices.length > MAX_HISTORY) {
-                closePrices.shift();
+    // Module 2: recover any OPEN positions from the DB before we start, so a
+    // restart never drops stop-loss monitoring. Non-fatal if the DB is down.
+    recoverOpenPositions()
+        .then((openTrades) => {
+            if (openTrades && openTrades.length > 0) {
+                // Re-arm in-memory state from the most recent open position so
+                // the SELL / stop-loss evaluation resumes after a restart.
+                const latest = openTrades[0];
+                isInPosition = true;
+                entryPrice = parseFloat(latest.entry_price) || 0;
+                console.log(`\ud83d\udd01 Re-armed monitoring: in position @ ${entryPrice}`);
             }
-
-            console.log(
-                `[Candle Closed] Price: $${closePrice} | Array Length: ${closePrices.length}`
+        })
+        .catch((err) => console.error('State recovery error:', err.message))
+        .finally(() => {
+            wsManager = new ResilientWebSocket(
+                SYMBOL,
+                TIMEFRAME,
+                handleKline,
+                () => console.log('\ud83d\udd04 WebSocket reconnected. Resuming strategy evaluation.')
             );
-            evaluateStrategy();
-        }
-    });
+            wsManager.connect();
+            global.wsManager = wsManager; // exposed for graceful shutdown
+        });
 
-    ws.on('error', (err) => {
-        console.error('WebSocket error:', err.message);
-    });
+    return wsManager;
+}
 
-    ws.on('close', () => {
-        console.warn('WebSocket closed. Reconnecting in 5s...');
-        setTimeout(connect, 5000);
-    });
+function getWsManager() {
+    return wsManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,14 +156,33 @@ function evaluateStrategy() {
         const isRsiHealthy = currentRsi < RSI_BUY_CEILING;
 
         if (isBullishCross && isRsiHealthy) {
-            console.log(`🚨 BUY SIGNAL GENERATED 🚨`);
-            console.log(
-                `Asset: ${SYMBOL.toUpperCase()} | Price: $${currentPrice} | ` +
-                `RSI: ${currentRsi.toFixed(2)}`
-            );
-            // TODO: Trigger Push Notification / Webhook to your Next.js frontend here
-            // TODO: Log signal to PostgreSQL
-            // The human reviews the alert and calls confirmBuy() to enter.
+            // --- Phase E: advanced-logic confirmation filters ---
+            // Degrade gracefully: if 1h or volume series aren't tracked yet,
+            // the checks return false with a reason rather than throwing.
+            const mtfCheck = checkHigherTimeframeTrend(global.closePrices1h || closePrices);
+            const volumes = global.volumes || [];
+            const currentVolume = volumes.length ? volumes[volumes.length - 1] : 0;
+            const volumeCheck = checkVolumeRegime(volumes, currentVolume);
+
+            if (mtfCheck.isBullishHigherTrend && volumeCheck.isHighVolume) {
+                console.log(`🚨 HIGH-CONFIDENCE BUY SIGNAL 🚨`);
+                console.log(
+                    `Asset: ${SYMBOL.toUpperCase()} | Price: $${currentPrice} | ` +
+                    `RSI: ${currentRsi.toFixed(2)}`
+                );
+                console.log(`   ✅ 15m EMA cross + RSI < ${RSI_BUY_CEILING}`);
+                console.log(`   ✅ 1h trend bullish (price > 1h EMA50)`);
+                console.log(`   ✅ Volume spike: ${volumeCheck.volumeRatio}x average`);
+                // TODO: Trigger Push Notification / Webhook to your Next.js frontend here
+                // TODO: Log signal to PostgreSQL
+                // The human reviews the alert and calls confirmBuy() to enter.
+            } else {
+                console.log(
+                    `⚠️ Signal rejected by advanced logic: ` +
+                    `MTF=${mtfCheck.isBullishHigherTrend} (${mtfCheck.reason || 'ok'}), ` +
+                    `Volume=${volumeCheck.isHighVolume} (${volumeCheck.reason || volumeCheck.volumeRatio + 'x'})`
+                );
+            }
         }
     }
     // 3. Evaluate SELL Conditions (If we are in a position)
@@ -209,4 +249,4 @@ if (require.main === module) {
     connect();
 }
 
-module.exports = { confirmBuy, confirmSell, getState, connect };
+module.exports = { confirmBuy, confirmSell, getState, connect, getWsManager, binanceClient };

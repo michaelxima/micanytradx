@@ -19,6 +19,7 @@ import {
   VolumeX,
   Sliders,
   ShieldCheck,
+  BarChart3,
 } from "lucide-react";
 
 interface Signal {
@@ -51,6 +52,29 @@ interface Trade {
   closed_at?: string;
 }
 
+// Phase D analytics shapes
+interface PerformanceMetrics {
+  total_closed: number | string;
+  winning_trades: number | string;
+  losing_trades: number | string;
+  win_rate: number | string;
+  profit_factor: number | string;
+  net_pnl: number | string;
+  avg_slippage_percent?: number | string | null;
+}
+
+interface LivePosition {
+  tradeId: string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  entryPrice: number;
+  currentPrice: number;
+  quantity: number;
+  stopLossPrice?: number | null;
+  unrealizedPnl: number;
+  unrealizedPnlPercent: number;
+}
+
 export default function TradingDashboard() {
   // Config & API State
   const [apiUrl, setApiUrl] = useState(process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000");
@@ -69,6 +93,10 @@ export default function TradingDashboard() {
   const [openTrades, setOpenTrades] = useState<Trade[]>([]);
   const [closedTrades, setClosedTrades] = useState<Trade[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Phase D: Analytics & live unrealized P&L
+  const [analytics, setAnalytics] = useState<PerformanceMetrics | null>(null);
+  const [livePositions, setLivePositions] = useState<LivePosition[]>([]);
 
   // Modals & Action States
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
@@ -171,6 +199,34 @@ export default function TradingDashboard() {
         }
       }
 
+      // 4. Analytics: performance + slippage (merged into one object for the KPI row)
+      const [perfRes, slipRes, unrealizedRes] = await Promise.all([
+        fetch(`${apiUrl}/api/analytics/performance`, { cache: "no-store" }).catch(() => null),
+        fetch(`${apiUrl}/api/analytics/slippage`, { cache: "no-store" }).catch(() => null),
+        fetch(`${apiUrl}/api/trades/unrealized`, { cache: "no-store" }).catch(() => null),
+      ]);
+
+      if (perfRes && perfRes.ok) {
+        const perfData = await perfRes.json();
+        if (perfData.success && perfData.data) {
+          let merged: PerformanceMetrics = perfData.data;
+          if (slipRes && slipRes.ok) {
+            const slipData = await slipRes.json();
+            if (slipData.success && slipData.data) {
+              merged = { ...merged, avg_slippage_percent: slipData.data.avg_slippage_percent };
+            }
+          }
+          setAnalytics(merged);
+        }
+      }
+
+      if (unrealizedRes && unrealizedRes.ok) {
+        const unrealizedData = await unrealizedRes.json();
+        if (unrealizedData.success && Array.isArray(unrealizedData.data)) {
+          setLivePositions(unrealizedData.data);
+        }
+      }
+
     } catch {
       setIsApiOnline(false);
     } finally {
@@ -181,7 +237,9 @@ export default function TradingDashboard() {
   // Polling Interval
   useEffect(() => {
     const initialFetch = setTimeout(fetchData, 0);
-    const interval = setInterval(fetchData, 4000);
+    // Phase D: poll every 3s for live analytics + unrealized P&L (overridable).
+    const pollMs = Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS) || 3000;
+    const interval = setInterval(fetchData, pollMs);
     return () => {
       clearTimeout(initialFetch);
       clearInterval(interval);
@@ -484,6 +542,43 @@ export default function TradingDashboard() {
 
       {/* Main Trading Cockpit */}
       <main className="max-w-7xl mx-auto w-full p-4 lg:p-8 flex-1 flex flex-col gap-6">
+        {/* Phase D: Analytics KPI Row */}
+        {analytics && (
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-[#0f172a]/70 border border-slate-800/80 rounded-2xl p-4">
+              <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
+                <span className="font-medium">WIN RATE</span>
+                <BarChart3 className="h-4 w-4 text-emerald-400" />
+              </div>
+              <div className="text-2xl font-bold text-emerald-400">{analytics.win_rate}%</div>
+              <div className="text-xs text-slate-500">
+                {analytics.winning_trades}W / {analytics.losing_trades}L
+              </div>
+            </div>
+            <div className="bg-[#0f172a]/70 border border-slate-800/80 rounded-2xl p-4">
+              <div className="text-slate-400 text-xs font-medium mb-1">PROFIT FACTOR</div>
+              <div className={`text-2xl font-bold ${Number(analytics.profit_factor) >= 1.5 ? "text-emerald-400" : "text-amber-400"}`}>
+                {analytics.profit_factor}
+              </div>
+              <div className="text-xs text-slate-500">Gross Profit / Gross Loss</div>
+            </div>
+            <div className="bg-[#0f172a]/70 border border-slate-800/80 rounded-2xl p-4">
+              <div className="text-slate-400 text-xs font-medium mb-1">NET P&amp;L</div>
+              <div className={`text-2xl font-bold ${Number(analytics.net_pnl) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                ${Number(analytics.net_pnl).toFixed(2)}
+              </div>
+              <div className="text-xs text-slate-500">{analytics.total_closed} Total Trades</div>
+            </div>
+            <div className="bg-[#0f172a]/70 border border-slate-800/80 rounded-2xl p-4">
+              <div className="text-slate-400 text-xs font-medium mb-1">AVG SLIPPAGE</div>
+              <div className="text-2xl font-bold text-cyan-400">
+                {analytics.avg_slippage_percent != null ? analytics.avg_slippage_percent : "0.00"}%
+              </div>
+              <div className="text-xs text-slate-500">Execution Quality</div>
+            </div>
+          </section>
+        )}
+
         {/* KPI & Market Pulse Cards */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Live Engine Status */}
@@ -709,11 +804,18 @@ export default function TradingDashboard() {
                   {openTrades.map((trade) => {
                     const entry = parseFloat(String(trade.entry_price));
                     const qty = parseFloat(String(trade.quantity));
-                    const current = livePrice > 0 ? livePrice : entry;
-                    const diff = current - entry;
-                    const pnlPct = (diff / entry) * 100;
-                    const pnlAbs = diff * qty;
-                    const isProfit = diff >= 0;
+                    // Phase D: prefer the backend's authoritative unrealized P&L
+                    // (accounts for commission + correct per-symbol live price).
+                    // Fall back to the local BTC ticker calc only if absent.
+                    const live = livePositions.find((p) => p.tradeId === trade.id);
+                    const current = live
+                      ? live.currentPrice
+                      : livePrice > 0
+                      ? livePrice
+                      : entry;
+                    const pnlAbs = live ? live.unrealizedPnl : (current - entry) * qty;
+                    const pnlPct = live ? live.unrealizedPnlPercent : ((current - entry) / entry) * 100;
+                    const isProfit = pnlAbs >= 0;
 
                     return (
                       <tr key={trade.id} className="hover:bg-slate-800/40 transition">

@@ -40,11 +40,11 @@ async function main() {
         console.log('Tables now in the database:');
         res.rows.forEach((r) => console.log('  -', r.table_name));
 
-        const expected = ['users', 'strategies', 'signals', 'trades'];
+        const expected = ['users', 'strategies', 'signals', 'trades', 'account_snapshots'];
         const found = res.rows.map((r) => r.table_name);
         const missing = expected.filter((t) => !found.includes(t));
         if (missing.length === 0) {
-            console.log('\n==> SUCCESS: all 4 expected tables exist.');
+            console.log(`\n==> SUCCESS: all ${expected.length} expected tables exist.`);
         } else {
             console.log('\n==> WARNING: missing tables:', missing.join(', '));
         }

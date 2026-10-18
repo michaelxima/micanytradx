@@ -2,22 +2,70 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { connect: connectEngine } = require('./strategyEngine');
+const { connect: connectEngine, getWsManager } = require('./strategyEngine');
 const { confirmBuy, confirmSell } = require('./tradeController');
+const { registerGracefulShutdown } = require('./infrastructureManager');
+const { haltTrading } = require('./riskManager');
+const { startTrailingStopManager, stopTrailingStopManager } = require('./trailingStopManager');
+const {
+    getPerformanceMetrics,
+    getSlippageAnalysis,
+    getLiveUnrealizedPnL,
+} = require('./analyticsController');
 const pool = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors()); // Allows your future mobile/web frontend to talk to this API
+// CORS: lock to known origins in production. Set CORS_ORIGINS in the Railway
+// environment to a comma-separated allowlist (e.g. your Vercel URL). If unset,
+// we fall back to permissive mode for local development only.
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+app.use(
+    cors(
+        allowedOrigins.length > 0
+            ? {
+                  origin(origin, callback) {
+                      // Allow same-origin / server-to-server (no Origin header)
+                      // and any explicitly allowlisted origin.
+                      if (!origin || allowedOrigins.includes(origin)) {
+                          return callback(null, true);
+                      }
+                      return callback(new Error(`CORS: origin not allowed: ${origin}`));
+                  },
+              }
+            : undefined // dev: permissive
+    )
+);
 app.use(express.json()); // Parses incoming JSON requests
+
+if (allowedOrigins.length > 0) {
+    console.log('🔒 CORS locked to:', allowedOrigins.join(', '));
+} else {
+    console.warn('⚠️  CORS is permissive (no CORS_ORIGINS set) — set it in production.');
+}
 
 // ==========================================
 // 1. START THE BRAIN (Strategy Engine)
 // ==========================================
 console.log('🧠 Initializing Strategy Engine & WebSocket connection...');
 connectEngine();
+
+// Phase E: start the trailing-stop background loop.
+startTrailingStopManager();
+
+// Phase C: register SIGINT/SIGTERM handlers so the process halts trading,
+// closes the WebSocket, and drains the DB pool before exiting.
+// The WS manager is created asynchronously inside the engine, so we rely on
+// the global.wsManager fallback (resolved at shutdown time) rather than
+// capturing a possibly-null reference now.
+void getWsManager; // (engine also sets global.wsManager)
+registerGracefulShutdown({ onHalt: haltTrading, onStop: stopTrailingStopManager });
 
 // ==========================================
 // 2. API ROUTES (The Nervous System)
@@ -48,14 +96,15 @@ app.get('/api/signals/pending', async (req, res) => {
 // POST CONFIRM BUY (The Human-in-the-Loop Trigger)
 app.post('/api/trades/confirm-buy', async (req, res) => {
     try {
-        const { signalId, quantity, userId, confirmedPrice } = req.body;
-        
-        if (!signalId || !quantity) {
-            return res.status(400).json({ success: false, error: 'signalId and quantity are required.' });
+        const { signalId, userId, confirmedPrice } = req.body;
+
+        if (!signalId) {
+            return res.status(400).json({ success: false, error: 'signalId is required.' });
         }
 
-        // Call the tradeController function we built in Phase 1
-        const result = await confirmBuy(signalId, quantity, userId || 'in-house-user', confirmedPrice); 
+        // Position size is now owned by the risk manager (Phase A/B), so the
+        // client no longer sends quantity — just the signal to act on.
+        const result = await confirmBuy(signalId, userId || 'in-house-user', confirmedPrice);
         res.json(result);
     } catch (error) {
         console.error('Error confirming buy:', error);
@@ -94,6 +143,43 @@ app.get('/api/trades/open', async (req, res) => {
 });
 
 // ==========================================
+// ANALYTICS ROUTES (Phase D)
+// ==========================================
+
+// GET performance metrics (win rate, profit factor, net P&L)
+app.get('/api/analytics/performance', async (req, res) => {
+    try {
+        const metrics = await getPerformanceMetrics();
+        res.json({ success: true, data: metrics });
+    } catch (error) {
+        console.error('Error fetching performance metrics:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// GET slippage / execution analysis
+app.get('/api/analytics/slippage', async (req, res) => {
+    try {
+        const slippage = await getSlippageAnalysis();
+        res.json({ success: true, data: slippage });
+    } catch (error) {
+        console.error('Error fetching slippage analysis:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// GET live unrealized P&L for open positions
+app.get('/api/trades/unrealized', async (req, res) => {
+    try {
+        const livePositions = await getLiveUnrealizedPnL();
+        res.json({ success: true, data: livePositions });
+    } catch (error) {
+        console.error('Error fetching unrealized P&L:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ==========================================
 // 3. START SERVER
 // ==========================================
 app.listen(PORT, () => {
@@ -104,4 +190,7 @@ app.listen(PORT, () => {
     console.log(`   - POST /api/trades/confirm-buy`);
     console.log(`   - POST /api/trades/confirm-sell`);
     console.log(`   - GET  /api/trades/open`);
+    console.log(`   - GET  /api/trades/unrealized`);
+    console.log(`   - GET  /api/analytics/performance`);
+    console.log(`   - GET  /api/analytics/slippage`);
 });

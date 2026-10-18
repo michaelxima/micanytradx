@@ -50,10 +50,13 @@ CREATE TABLE IF NOT EXISTS trades (
     quantity DECIMAL(18, 8) NOT NULL,
     stop_loss_price DECIMAL(18, 8),
     take_profit_price DECIMAL(18, 8),
+    exchange_order_id VARCHAR(64),  -- Binance orderId for tracking
     status VARCHAR(20) DEFAULT 'OPEN'
         CHECK (status IN ('OPEN', 'CLOSED', 'CANCELLED')),
     pnl_percentage DECIMAL(10, 4), -- Calculated on exit
     pnl_absolute DECIMAL(18, 8),   -- Calculated on exit
+    commission DECIMAL(18, 8) DEFAULT 0,          -- Total trading fees paid (buy + sell)
+    commission_asset VARCHAR(10) DEFAULT 'USDT',  -- Asset the commission was charged in
     opened_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     closed_at TIMESTAMP WITH TIME ZONE
 );
@@ -62,6 +65,18 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS idx_signals_status ON signals(status);
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
+
+-- 6. Account Snapshots Table (tracks balance over time for max-drawdown protection)
+-- riskManager.checkMaxDrawdown() inserts a snapshot on every risk check and reads
+-- MAX(balance_snapshot) as the peak balance. Without this table those checks throw.
+CREATE TABLE IF NOT EXISTS account_snapshots (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    balance_snapshot DECIMAL(18, 8) NOT NULL,
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_snapshots_recorded_at
+    ON account_snapshots(recorded_at);
 
 -- Seed the default strategy so signals have something to reference.
 INSERT INTO strategies (name, description, parameters)
